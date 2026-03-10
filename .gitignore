@@ -1,0 +1,8 @@
+\.clinerules
+\temp
+system.ini
+vless_client.exe
+vless_client
+go.mod
+go.sum
+config.vless
