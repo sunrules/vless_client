@@ -5,7 +5,7 @@ This is a GUI client for working with the VLESS protocol and Reality technology.
 ## Features
 
 - Support for VLESS protocol with Reality technology (xtls-rprx-vision)
-- Support for Transports: TCP, WebSocket, gRPC, HTTP/2 (h2), XHTTP
+- Support for Transports: TCP, XHTTP
 - SOCKS5 and HTTP proxy servers for local traffic
 - Encryption settings: None, TLS, Reality
 - Built-in debug mode for debugging
@@ -141,35 +141,6 @@ The configuration is encrypted using AES-256-GCM and saved in the `config.vless`
 ```json
 "transport": {
   "type": "tcp"
-}
-```
-
-#### WebSocket
-
-```json
-"transport": {
-  "type": "ws",
-  "path": "/path",
-  "host": "example.com"
-}
-```
-
-#### gRPC
-
-```json
-"transport": {
-  "type": "grpc",
-  "path": "service_name"
-}
-```
-
-#### HTTP/2 (h2)
-
-```json
-"transport": {
-  "type": "http",
-  "path": "/path",
-  "host": "example.com"
 }
 ```
 
