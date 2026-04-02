@@ -257,6 +257,44 @@ func executeCommand(cmd string) (string, error) {
 	return string(out), nil
 }
 
+// Internet Explorer/WinINet constants for proxy notification
+const (
+	INTERNET_OPTION_REFRESH            = 37
+	INTERNET_OPTION_SETTINGS_CHANGED   = 39
+	WM_SETTINGCHANGE                   = 0x001A
+)
+
+// WinINet DLL procedure for settings refresh
+var InternetSetOption = syscall.NewLazyDLL("wininet.dll").NewProc("InternetSetOptionW")
+
+// notifyWindowsProxyChange sends system notification that proxy settings have been changed
+// Required since Windows 11 - registry changes alone are no longer sufficient
+func notifyWindowsProxyChange() error {
+	// First notify WinINet that settings have changed
+	ret, _, err := InternetSetOption.Call(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
+	if ret == 0 {
+		infoLog("WinINet settings changed notification: %v", err)
+	}
+
+	// Then refresh WinINet settings
+	ret, _, err = InternetSetOption.Call(0, INTERNET_OPTION_REFRESH, 0, 0)
+	if ret == 0 {
+		infoLog("WinINet refresh notification: %v", err)
+	}
+
+	// Broadcast WM_SETTINGCHANGE message to all top-level windows
+	// This tells Windows shell and all applications to reload network settings
+	_, _, err = SendMessage.Call(
+		uintptr(HWND_BROADCAST),
+		uintptr(WM_SETTINGCHANGE),
+		0,
+		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("InternetSettings"))),
+	)
+
+	infoLog("System proxy change notification sent")
+	return nil
+}
+
 // enableWindowsProxy enables system proxy in Windows registry
 func enableWindowsProxy(socksPort, httpPort int) error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
@@ -277,6 +315,11 @@ func enableWindowsProxy(socksPort, httpPort int) error {
 		return err
 	}
 
+	// Windows 11 requires explicit notification about settings change
+	if err := notifyWindowsProxyChange(); err != nil {
+		infoLog("Warning: failed to send proxy change notification: %v", err)
+	}
+
 	infoLog("Windows system proxy enabled: %s", proxyAddr)
 	return nil
 }
@@ -295,6 +338,11 @@ func disableWindowsProxy() error {
 
 	if err := key.SetStringValue("ProxyServer", ""); err != nil {
 		return err
+	}
+
+	// Windows 11 requires explicit notification about settings change
+	if err := notifyWindowsProxyChange(); err != nil {
+		infoLog("Warning: failed to send proxy change notification: %v", err)
 	}
 
 	infoLog("Windows system proxy disabled")

@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
-	"v2/client"
+	"vless_client/client"
 	_ "github.com/xtls/xray-core/main/distro/all"
 	"gopkg.in/ini.v1"
 	"io"
