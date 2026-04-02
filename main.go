@@ -1,7 +1,3 @@
-// VLESS Client
-
-// +build !headless
-
 package main
 
 import (

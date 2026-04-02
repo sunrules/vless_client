@@ -6,3 +6,5 @@ vless_client
 go.mod
 go.sum
 config.vless
+.gitignore
+.vscode
