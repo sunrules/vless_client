@@ -1,5 +1,6 @@
 // Windows-specific implementation for VLESS Client
 // $env:CGO_ENABLED = "1"; $env:GOOS = "windows"; $env:GOARCH = "amd64"; go build -ldflags '-s -w' -o vless_client.exe -ldflags -H=windowsgui
+// go build -o vless_client.exe -ldflags "-s -w -H=windowsgui" 2>&1
 
 package main
 
@@ -267,6 +268,12 @@ const (
 // WinINet DLL procedure for settings refresh
 var InternetSetOption = syscall.NewLazyDLL("wininet.dll").NewProc("InternetSetOptionW")
 
+// PostMessage sends a message to a window without waiting for a response
+var PostMessage = syscall.NewLazyDLL("user32.dll").NewProc("PostMessageW")
+
+// SendNotifyMessage sends a message without waiting for a response (non-blocking broadcast)
+var SendNotifyMessage = syscall.NewLazyDLL("user32.dll").NewProc("SendNotifyMessageW")
+
 // notifyWindowsProxyChange sends system notification that proxy settings have been changed
 // Required since Windows 11 - registry changes alone are no longer sufficient
 func notifyWindowsProxyChange() error {
@@ -282,14 +289,17 @@ func notifyWindowsProxyChange() error {
 		infoLog("WinINet refresh notification: %v", err)
 	}
 
-	// Broadcast WM_SETTINGCHANGE message to all top-level windows
-	// This tells Windows shell and all applications to reload network settings
-	_, _, err = SendMessage.Call(
+	// Use SendNotifyMessage instead of SendMessage for broadcast to avoid blocking
+	// SendNotifyMessage returns immediately without waiting for all windows to process
+	_, _, err = SendNotifyMessage.Call(
 		uintptr(HWND_BROADCAST),
 		uintptr(WM_SETTINGCHANGE),
 		0,
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr("InternetSettings"))),
 	)
+	if err != nil && err != syscall.Errno(0) {
+		infoLog("Warning: SendNotifyMessage failed: %v", err)
+	}
 
 	infoLog("System proxy change notification sent")
 	return nil
@@ -469,6 +479,8 @@ func onTrayReady(w fyne.Window, a fyne.App) func() {
 }
 
 func onTrayExit() {
+	// Clean up resources
 	closeLogFiles()
-	os.Exit(0)
+	// Don't call os.Exit here - let the main function exit normally
+	// This allows defer functions to run properly
 }

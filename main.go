@@ -926,9 +926,12 @@ func main() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
-		clientInstance.Stop()
-		disableSystemProxy()
-		os.Exit(0)
+		infoLog("Received shutdown signal")
+		if clientInstance.IsRunning() {
+			clientInstance.Stop()
+			disableSystemProxy()
+		}
+		a.Quit()
 	}()
 
 	// Handle window close event - minimize to tray instead of exiting (platform-specific)
