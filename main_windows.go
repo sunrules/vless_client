@@ -260,9 +260,19 @@ func executeCommand(cmd string) (string, error) {
 
 // Internet Explorer/WinINet constants for proxy notification
 const (
-	INTERNET_OPTION_REFRESH            = 37
-	INTERNET_OPTION_SETTINGS_CHANGED   = 39
-	WM_SETTINGCHANGE                   = 0x001A
+	INTERNET_OPTION_REFRESH              = 37
+	INTERNET_OPTION_SETTINGS_CHANGED     = 39
+	INTERNET_OPTION_PER_CONNECTION_OPTION = 75
+	WM_SETTINGCHANGE                     = 0x001A
+
+	// INTERNET_PER_CONN_OPTION constants
+	INTERNET_PER_CONN_FLAGS         = 1
+	INTERNET_PER_CONN_PROXY_SERVER  = 2
+	INTERNET_PER_CONN_PROXY_BYPASS  = 3
+
+	// Proxy flags
+	PROXY_TYPE_DIRECT = 0x00000001
+	PROXY_TYPE_PROXY  = 0x00000002
 )
 
 // WinINet DLL procedure for settings refresh
@@ -274,22 +284,86 @@ var PostMessage = syscall.NewLazyDLL("user32.dll").NewProc("PostMessageW")
 // SendNotifyMessage sends a message without waiting for a response (non-blocking broadcast)
 var SendNotifyMessage = syscall.NewLazyDLL("user32.dll").NewProc("SendNotifyMessageW")
 
+// INTERNET_PER_CONN_OPTION structure
+type INTERNET_PER_CONN_OPTION struct {
+	dwOption uint32
+	Value    [8]byte // Union of DWORD, LPSTR, FILETIME
+}
+
+// INTERNET_PER_CONN_OPTION_LIST structure
+type INTERNET_PER_CONN_OPTION_LIST struct {
+	dwSize        uint32
+	pszConnection *uint16
+	dwOptionCount uint32
+	dwOptionError uint32
+	pOptions      uintptr
+}
+
 // notifyWindowsProxyChange sends system notification that proxy settings have been changed
 // Required since Windows 11 - registry changes alone are no longer sufficient
-func notifyWindowsProxyChange() error {
-	// First notify WinINet that settings have changed
+// This function uses INTERNET_OPTION_PER_CONNECTION_OPTION to properly notify all components
+// including UWP apps that use the Windows.Web.Http namespace
+func notifyWindowsProxyChange(proxyServer string, proxyEnabled bool) error {
+	// Method 1: Use INTERNET_OPTION_PER_CONNECTION_OPTION for proper UWP support
+	if proxyServer != "" {
+		proxyServerW := syscall.StringToUTF16Ptr(proxyServer)
+		proxyBypassW := syscall.StringToUTF16Ptr("localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*")
+
+		var flags uint32
+		if proxyEnabled {
+			flags = PROXY_TYPE_DIRECT | PROXY_TYPE_PROXY
+		} else {
+			flags = PROXY_TYPE_DIRECT
+		}
+
+		options := make([]INTERNET_PER_CONN_OPTION, 3)
+
+		// Set flags
+		options[0].dwOption = INTERNET_PER_CONN_FLAGS
+		*(*uint32)(unsafe.Pointer(&options[0].Value[0])) = flags
+
+		// Set proxy server
+		options[1].dwOption = INTERNET_PER_CONN_PROXY_SERVER
+		*(*uintptr)(unsafe.Pointer(&options[1].Value[0])) = uintptr(unsafe.Pointer(proxyServerW))
+
+		// Set proxy bypass
+		options[2].dwOption = INTERNET_PER_CONN_PROXY_BYPASS
+		*(*uintptr)(unsafe.Pointer(&options[2].Value[0])) = uintptr(unsafe.Pointer(proxyBypassW))
+
+		optionList := INTERNET_PER_CONN_OPTION_LIST{
+			dwSize:        uint32(unsafe.Sizeof(INTERNET_PER_CONN_OPTION_LIST{})),
+			pszConnection: nil, // nil for LAN
+			dwOptionCount: 3,
+			dwOptionError: 0,
+			pOptions:      uintptr(unsafe.Pointer(&options[0])),
+		}
+
+		ret, _, err := InternetSetOption.Call(
+			0,
+			INTERNET_OPTION_PER_CONNECTION_OPTION,
+			uintptr(unsafe.Pointer(&optionList)),
+			uintptr(optionList.dwSize),
+		)
+		if ret == 0 {
+			infoLog("INTERNET_OPTION_PER_CONNECTION_OPTION failed: %v", err)
+		} else {
+			infoLog("INTERNET_OPTION_PER_CONNECTION_OPTION succeeded")
+		}
+	}
+
+	// Method 2: Also notify WinINet that settings have changed (legacy support)
 	ret, _, err := InternetSetOption.Call(0, INTERNET_OPTION_SETTINGS_CHANGED, 0, 0)
 	if ret == 0 {
 		infoLog("WinINet settings changed notification: %v", err)
 	}
 
-	// Then refresh WinINet settings
+	// Method 3: Refresh WinINet settings
 	ret, _, err = InternetSetOption.Call(0, INTERNET_OPTION_REFRESH, 0, 0)
 	if ret == 0 {
 		infoLog("WinINet refresh notification: %v", err)
 	}
 
-	// Use SendNotifyMessage instead of SendMessage for broadcast to avoid blocking
+	// Method 4: Use SendNotifyMessage instead of SendMessage for broadcast to avoid blocking
 	// SendNotifyMessage returns immediately without waiting for all windows to process
 	_, _, err = SendNotifyMessage.Call(
 		uintptr(HWND_BROADCAST),
@@ -319,6 +393,7 @@ func enableWindowsProxy(socksPort, httpPort int) error {
 
 	httpProxy := `127.0.0.1:` + fmt.Sprintf("%d", httpPort)
 	socksProxy := `127.0.0.1:` + fmt.Sprintf("%d", socksPort)
+	// Use http= prefix for all protocols - Windows sets proxy for all protocols when http= is used
 	proxyAddr := "http=" + httpProxy + ";https=" + httpProxy + ";socks=" + socksProxy
 
 	if err := key.SetStringValue("ProxyServer", proxyAddr); err != nil {
@@ -326,7 +401,8 @@ func enableWindowsProxy(socksPort, httpPort int) error {
 	}
 
 	// Windows 11 requires explicit notification about settings change
-	if err := notifyWindowsProxyChange(); err != nil {
+	// Use the proxy address string for INTERNET_OPTION_PER_CONNECTION_OPTION
+	if err := notifyWindowsProxyChange(proxyAddr, true); err != nil {
 		infoLog("Warning: failed to send proxy change notification: %v", err)
 	}
 
@@ -351,7 +427,7 @@ func disableWindowsProxy() error {
 	}
 
 	// Windows 11 requires explicit notification about settings change
-	if err := notifyWindowsProxyChange(); err != nil {
+	if err := notifyWindowsProxyChange("", false); err != nil {
 		infoLog("Warning: failed to send proxy change notification: %v", err)
 	}
 
