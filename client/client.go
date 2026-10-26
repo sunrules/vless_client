@@ -226,7 +226,13 @@ func BuildXrayConfigJSON(cfg *Config) ([]byte, error) {
 		case "xhttp":
 			xhttpSettings := map[string]interface{}{
 				"path": cfg.Transport.Path,
-				"host": cfg.Transport.Host,
+			}
+			if cfg.Transport.Host != "" {
+				xhttpSettings["host"] = cfg.Transport.Host
+			} else if vless.SNI != "" {
+				xhttpSettings["host"] = vless.SNI
+			} else {
+				xhttpSettings["host"] = vless.Address
 			}
 			if cfg.Transport.Mode != "" {
 				xhttpSettings["mode"] = cfg.Transport.Mode
@@ -285,6 +291,9 @@ func BuildXrayConfigJSON(cfg *Config) ([]byte, error) {
 	xrayCfg["outbounds"] = append(xrayCfg["outbounds"].([]interface{}), map[string]interface{}{
 		"tag":      "direct",
 		"protocol": "freedom",
+		"settings": map[string]interface{}{
+			"domainStrategy": "UseIPv4v6",
+		},
 	})
 
 	// Add block outbound
@@ -327,6 +336,14 @@ func NewClient(cfg *Config) (*Client, error) {
 func (c *Client) Start() error {
 	if c.running {
 		return fmt.Errorf("client already running")
+	}
+
+	// Validate configuration before starting xray-core. xray-core (splithttp/xhttp transport)
+	// panics with nil pointer dereference when it tries to build an HTTP request to an
+	// invalid server address (e.g. the default "ipv4/ipv6" placeholder), and that panic
+	// happens in a background goroutine and cannot be recovered.
+	if err := ValidateConfig(c.config); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	// Generate JSON config

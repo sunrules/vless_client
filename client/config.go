@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -270,6 +272,41 @@ func GetDefaultXHTTPConfig() *Config {
 	return cfg
 }
 
+// reservedPlaceholders are default placeholder values that must be replaced by the user
+// before connecting, otherwise xray-core may panic when building requests to an invalid address.
+var reservedPlaceholders = []string{
+	"ipv4/ipv6",
+	"your.server.com",
+}
+
+// isValidHostname performs a basic syntactical validation of a host name (no network lookups).
+func isValidHostname(s string) bool {
+	if s == "" {
+		return false
+	}
+	if len(s) > 253 {
+		return false
+	}
+	s = strings.TrimSuffix(s, ".")
+	if s == "" {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		for _, r := range label {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-') {
+				return false
+			}
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+	}
+	return true
+}
+
 // ValidateConfig validates configuration syntax and content
 func ValidateConfig(cfg *Config) error {
 	if cfg.VLESS == nil {
@@ -277,6 +314,18 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.VLESS.Address == "" {
 		return errors.New("server address not specified")
+	}
+	for _, placeholder := range reservedPlaceholders {
+		if cfg.VLESS.Address == placeholder {
+			return fmt.Errorf("server address is not set: %q is a default placeholder", cfg.VLESS.Address)
+		}
+	}
+	// Strip brackets for IPv6 address validation (net.ParseIP does not accept them)
+	addrForIPCheck := strings.TrimPrefix(strings.TrimSuffix(cfg.VLESS.Address, "]"), "[")
+	if ip := net.ParseIP(addrForIPCheck); ip == nil {
+		if !isValidHostname(cfg.VLESS.Address) {
+			return fmt.Errorf("invalid server address: %q", cfg.VLESS.Address)
+		}
 	}
 	if cfg.VLESS.UUID == "" {
 		return errors.New("UUID not specified")

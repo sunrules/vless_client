@@ -5,13 +5,16 @@ This is a GUI client for working with the VLESS protocol and Reality technology.
 ## Features
 
 - Support for VLESS protocol with Reality technology (xtls-rprx-vision)
-- Support for Transports: TCP, XHTTP
+- Support for Transports: TCP, WS, gRPC, HTTP, XHTTP
 - SOCKS5 and HTTP proxy servers for local traffic
 - Encryption settings: None, TLS, Reality
 - Built-in debug mode for debugging
 - **Configuration encryption**: Configuration is stored in encrypted form (AES-256-GCM) in `config.vless` file
 - **Program state storage**: Uses `system.ini` to save the last state
 - **Configuration file management**: Load and save configurations from/to files
+- **vless:// URI import**: Import configuration from clipboard (e.g. `vless://UUID@host:port?...`)
+- **Configuration validation**: Validates server address, UUID, ports, and security settings before connecting to prevent xray-core crashes
+- **IPv6 support**: IPv6 addresses are automatically wrapped in brackets (`[::1]`) as required by xray-core
 - **System tray**: Support for working from the system tray (minimize window instead of closing)
 - **Windows system proxy**: Automatic enabling/disabling of the system proxy
 - **UAC (Loopback Route)**: (User Account Control) Management of static route for loopback interface with high priority. Improves access to local resources and bypasses VPN/proxy for local traffic.
@@ -24,9 +27,9 @@ This is a GUI client for working with the VLESS protocol and Reality technology.
 
 ### Requirements
 
-- Go 1.24.0 or higher
+- Go 1.26 or higher
 - Windows (for other platforms adaptation is required)
-- For Reality to work, valid public and short identifiers are required
+- For Reality to work, valid public key and short identifier are required
 
 ### Running from Source Code
 
@@ -58,6 +61,8 @@ On first launch, the program loads the configuration from the encrypted `config.
 
 The configuration is encrypted using AES-256-GCM and saved in the `config.vless` file. The program automatically creates this file on first run with default values.
 
+⚠️ **Important**: The default server address `ipv4/ipv6` is a placeholder. You must replace it with a real server IP address or domain before connecting, otherwise the client will refuse to start with a validation error.
+
 ### ConfigStorage Structure
 
 ```json
@@ -65,7 +70,7 @@ The configuration is encrypted using AES-256-GCM and saved in the `config.vless`
   "tcp": {
     "vless": {
       "address": "ipv4/ipv6",
-      "port": 4434,
+      "port": 443,
       "uuid": "User ID",
       "flow": "xtls-rprx-vision",
       "security": "reality",
@@ -93,13 +98,13 @@ The configuration is encrypted using AES-256-GCM and saved in the `config.vless`
   "xhttp": {
     "vless": {
       "address": "ipv4/ipv6",
-      "port": 4434,
+      "port": 443,
       "uuid": "User ID",
       "security": "reality",
       "publicKey": "Public Key",
       "shortId": "62",
       "sni": "www.google.com",
-      "fingerprint": "chrome"
+      "fingerprint": "firefox"
     },
     "transport": {
       "type": "xhttp",
@@ -124,15 +129,25 @@ The configuration is encrypted using AES-256-GCM and saved in the `config.vless`
 
 | Field         | Description                                                                 |
 |----------------|-----------------------------------------------------------------------------|
-| address        | Server IP address or domain                                                 |
-| port           | Server port                                                                |
-| uuid           | Unique user identifier                                                     |
-| flow           | Flow type (for Reality use `xtls-rprx-vision`)                             |
-| security       | Encryption type: `none`, `tls`, or `reality`                                |
-| publicKey      | Reality public key                                                          |
-| shortId        | Reality short identifier (optional but recommended)                        |
-| sni            | SNI (Server Name Indication) for TLS or Reality                            |
-| fingerprint    | TLS fingerprint (chrome, firefox, safari, edge)                            |
+| address        | Server IP address or domain (IPv6 must be wrapped in brackets `[::1]`)      |
+| port           | Server port (1–65535)                                                       |
+| uuid           | User UUID                                                                   |
+| flow           | Flow (e.g. `xtls-rprx-vision` for Reality; empty for TCP/XHTTP)             |
+| security       | Security: `none`, `tls`, or `reality`                                       |
+| publicKey      | Reality public key (required for `reality`)                                 |
+| shortId        | Reality short ID                                                            |
+| sni            | SNI (Server Name Indication; required for `tls` and `reality`)              |
+| fingerprint    | TLS fingerprint (e.g. `chrome`, `firefox`)                                  |
+
+### Transport Parameters
+
+| Field     | Description                                                             |
+|-----------|-------------------------------------------------------------------------|
+| type      | Transport: `tcp`, `ws`, `grpc`, `http`, `xhttp`                         |
+| path      | Path for WS/HTTP/XHTTP (e.g. `/xh`)                                     |
+| host      | Host header for WS/HTTP/XHTTP                                           |
+| mode      | XHTTP mode: `stream`, `stream-one`, `packet`, `packet-up`               |
+| download  | Download URL for XHTTP packet mode                                      |
 
 ### Transport Settings
 
@@ -168,6 +183,45 @@ The configuration is encrypted using AES-256-GCM and saved in the `config.vless`
   "port": 1082
 }
 ```
+
+### Configuration Validation
+
+Before starting, the client validates the configuration:
+
+- Server address must not be empty or a default placeholder (`ipv4/ipv6`, `your.server.com`)
+- Server address must be a valid IPv4, IPv6, or hostname
+- UUID must not be empty
+- Ports (server, SOCKS, HTTP) must be in range 1–65535
+- For `reality` security: PublicKey and SNI are required
+- For `tls` security: SNI is required
+
+If validation fails, the client shows an error message and does not start xray-core.
+
+## Importing Configuration from `vless://` URI
+
+You can import a configuration from a `vless://` link via the clipboard:
+
+1. Copy a `vless://` URI to the clipboard, for example:
+   ```
+   vless://UID@[2001:db8::1]:443?encryption=none&security=reality&type=xhttp&path=%2Fxh&mode=stream-one&sni=google.com&fp=firefox&pbk=PK&sid=62#XHTTP%20Reality%20IPv6
+   ```
+2. Click **"Import from Clipboard"** in the GUI.
+3. The configuration is validated and applied; all UI fields (address, port, UUID, transport path/host/mode, security, SNI, fingerprint, public key, short ID) are updated automatically.
+4. A new client instance is created with the imported configuration.
+
+Supported URI parameters:
+- `type` — transport type (`tcp`, `ws`, `grpc`, `http`, `xhttp`)
+- `path` — transport path
+- `mode` — XHTTP mode
+- `host` — transport host header
+- `security` — `none`, `tls`, `reality`
+- `sni` — SNI
+- `fp` — fingerprint
+- `pbk` — Reality public key
+- `sid` — Reality short ID
+- `flow` — flow (e.g. `xtls-rprx-vision`)
+
+IPv6 addresses in the URI host are normalized with brackets `[...]` as required by xray-core.
 
 ## Working with XHTTP
 
@@ -244,9 +298,10 @@ For XHTTP to work, you need a server with support for this protocol. Example ser
 3. **Configuration management**:
    - "Load config": Load configuration from file
    - "Save config": Save current configuration to file
+   - "Import from Clipboard": Import configuration from `vless://` URI in clipboard
    - "Edit config": Open settings window for editing
 4. **Main functions**:
-   - "Connect": Start proxy servers
+   - "Connect": Start proxy servers (configuration is validated before start)
    - "System Proxy": Enable/disable system proxy (Windows)
    - "UAC":(User Account Control) Manage static route for loopback interface
    - "Exit": Close the application
@@ -320,6 +375,11 @@ When using system proxy settings, sometimes the local proxy servers might not be
 - **core: Unable to load config injson**: Connection error to server or invalid configuration
 - **infra/conf/serial: failed to parse json config**: JSON config format error
 - **unknown transport protocol: xhttp**: Server does not support XHTTP
+- **invalid configuration: server address is not set**: The server address is still the default placeholder (`ipv4/ipv6`). Replace it with a real address in the config or via URI import.
+- **invalid configuration: invalid server address**: The server address is not a valid IP or hostname.
+- **invalid configuration: UUID not specified**: UUID is empty.
+- **invalid configuration: public key is required for Reality security**: Reality is selected but no public key provided.
+- **invalid configuration: SNI is required for Reality/TLS security**: SNI is empty.
 
 ### Solutions
 
@@ -328,7 +388,8 @@ When using system proxy settings, sometimes the local proxy servers might not be
 3. Ensure server supports selected transport
 4. For XHTTP, use only compatible Xray Core versions
 5. Check configuration file path correctness
-6. If local proxy servers are not reachable, try enabling UAC mode
+6. Replace default placeholder address `ipv4/ipv6` with a real server address
+7. If local proxy servers are not reachable, try enabling UAC mode
 
 ## License
 

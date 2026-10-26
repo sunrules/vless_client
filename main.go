@@ -593,6 +593,52 @@ func main() {
 	// Config path display
 	configPathLabel = widget.NewLabel("Config file path: " + state.ConfigPath)
 
+	// Import from clipboard button
+	importBtn := widget.NewButton("Import from Clipboard", func() {
+		cb := a.Clipboard()
+		text := cb.Content()
+		newCfg, err := client.ParseVLESSURI(text)
+		if err != nil {
+			statusLabel.SetText("Import error: " + err.Error())
+			return
+		}
+
+		// Validate imported config before applying it
+		if err := client.ValidateConfig(newCfg); err != nil {
+			statusLabel.SetText("Import error: " + err.Error())
+			return
+		}
+
+		cfg = newCfg
+		addressEntry.SetText(cfg.VLESS.Address)
+		portEntry.SetText(fmt.Sprintf("%d", cfg.VLESS.Port))
+		uuidEntry.SetText(cfg.VLESS.UUID)
+		flowSelect.SetSelected(cfg.VLESS.Flow)
+		securitySelect.SetSelected(cfg.VLESS.Security)
+		if cfg.Transport != nil {
+			transportSelect.SetSelected(cfg.Transport.Type)
+			transportPathEntry.SetText(cfg.Transport.Path)
+			transportHostEntry.SetText(cfg.Transport.Host)
+			if cfg.Transport.Mode != "" {
+				modeSelect.SetSelected(cfg.Transport.Mode)
+			}
+		}
+		publicKeyEntry.SetText(cfg.VLESS.PublicKey)
+		shortIdEntry.SetText(cfg.VLESS.ShortID)
+		sniEntry.SetText(cfg.VLESS.SNI)
+		fingerprintSelect.SetSelected(cfg.VLESS.Fingerprint)
+
+		// Recreate client instance with the imported configuration
+		clientInstance, err = client.NewClient(cfg)
+		if err != nil {
+			statusLabel.SetText("Error creating client: " + err.Error())
+			return
+		}
+
+		statusLabel.SetText("Imported from clipboard")
+	})
+
+
 	// Load config button
 	loadConfigBtn := widget.NewButton("Load config", func() {
 		if clientInstance.IsRunning() {
@@ -888,7 +934,7 @@ func main() {
 			),
 			container.NewVBox(
 				widget.NewLabelWithStyle("Config File", fyne.TextAlignCenter, fyne.TextStyle{Bold: false}),
-				container.NewHBox(loadConfigBtn, saveConfigBtn),
+				container.NewHBox(loadConfigBtn, saveConfigBtn, importBtn),
 			),
 		),
 		widget.NewSeparator(),
