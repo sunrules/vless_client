@@ -23,7 +23,10 @@ import (
 type ProgramState struct {
 	ConfigFile  string `ini:"ConfigFile"`
 	SystemProxy bool   `ini:"SystemProxy"`
-	ConfigPath  string `ini:"ConfigPath"`
+	ConfigPath        string `ini:"ConfigPath"`
+	HttpProxy         string `ini:"http_proxy"`
+	SocksProxy        string `ini:"socks_proxy"`
+	SeparateTunneling  string `ini:"separate_tunneling"`
 }
 
 // LoadProgramState loads the last program state from system.ini
@@ -60,6 +63,9 @@ func LoadProgramState() (*ProgramState, error) {
 	state.ConfigFile = section.Key("ConfigFile").String()
 	state.SystemProxy, _ = section.Key("SystemProxy").Bool()
 	state.ConfigPath = section.Key("ConfigPath").String()
+	state.HttpProxy = section.Key("http_proxy").String()
+	state.SocksProxy = section.Key("socks_proxy").String()
+	state.SeparateTunneling = section.Key("separate_tunneling").String()
 
 	// If ConfigPath is not set, use the default platform-specific path
 	if state.ConfigPath == "" {
@@ -121,6 +127,9 @@ func SaveProgramState(state *ProgramState) error {
 	section.Key("ConfigFile").SetValue(state.ConfigFile)
 	section.Key("SystemProxy").SetValue(fmt.Sprintf("%v", state.SystemProxy))
 	section.Key("ConfigPath").SetValue(state.ConfigPath)
+	section.Key("http_proxy").SetValue(state.HttpProxy)
+	section.Key("socks_proxy").SetValue(state.SocksProxy)
+	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
 
 	return cfg.SaveTo(systemIniPath)
 }
@@ -835,7 +844,7 @@ func main() {
 			if state.SystemProxy {
 				// Enable system proxy without adding loopback route (default behavior)
 				// Use enableWindowsProxy directly instead of enableSystemProxy to avoid adding route
-				if err := enableWindowsProxy(cfg.SOCKS.Port, cfg.HTTP.Port); err != nil {
+				if err := enableWindowsProxy(cfg.SOCKS.Port, cfg.HTTP.Port, state.SeparateTunneling); err != nil {
 					errorLog("Error enabling Windows proxy: %v", err)
 				}
 				systemProxyIndicator.SetText("System Proxy: ✅")
@@ -882,7 +891,7 @@ func main() {
 				systemProxyBtn.SetText("System Proxy")
 				state.SystemProxy = false
 			} else {
-				enableWindowsProxy(cfg.SOCKS.Port, cfg.HTTP.Port)
+				enableWindowsProxy(cfg.SOCKS.Port, cfg.HTTP.Port, state.SeparateTunneling)
 				systemProxyIndicator.SetText("System Proxy: ✅")
 				systemProxyBtn.SetText("System Proxy (off)")
 				state.SystemProxy = true

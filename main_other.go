@@ -32,7 +32,7 @@ func setupSystemTray(w fyne.Window, a fyne.App) {
 }
 
 // enableWindowsProxy is a dummy implementation for non-Windows platforms
-func enableWindowsProxy(socksPort, httpPort int) error {
+func enableWindowsProxy(socksPort, httpPort int, exceptions string) error {
 	return fmt.Errorf("Windows proxy is not supported on this platform")
 }
 

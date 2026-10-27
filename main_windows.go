@@ -380,7 +380,7 @@ func notifyWindowsProxyChange(proxyServer string, proxyEnabled bool) error {
 }
 
 // enableWindowsProxy enables system proxy in Windows registry
-func enableWindowsProxy(socksPort, httpPort int) error {
+func enableWindowsProxy(socksPort, httpPort int, exceptions string) error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
 	if err != nil {
 		return err
@@ -398,6 +398,17 @@ func enableWindowsProxy(socksPort, httpPort int) error {
 
 	if err := key.SetStringValue("ProxyServer", proxyAddr); err != nil {
 		return err
+	}
+
+	// Separate tunneling exceptions
+	override := exceptions
+	if override == "" {
+		override = "<local>"
+	} else {
+		override = strings.ReplaceAll(override, ",", ";") + ";<local>"
+	}
+	if err := key.SetStringValue("ProxyOverride", override); err != nil {
+		infoLog("Warning: failed to set ProxyOverride: %v", err)
 	}
 
 	// Windows 11 requires explicit notification about settings change
@@ -495,7 +506,7 @@ func enableSystemProxy(socksPort, httpPort int) {
 		errorLog("Error adding loopback route: %v", err)
 	}
 
-	if err := enableWindowsProxy(socksPort, httpPort); err != nil {
+	if err := enableWindowsProxy(socksPort, httpPort, ""); err != nil {
 		errorLog("Error enabling Windows proxy: %v", err)
 	}
 }
