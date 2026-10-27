@@ -9,7 +9,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
-	"vless_client/client"
 	_ "github.com/xtls/xray-core/main/distro/all"
 	"gopkg.in/ini.v1"
 	"io"
@@ -17,16 +16,19 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"vless_client/client"
 )
 
 // ProgramState represents the last state of the program
 type ProgramState struct {
-	ConfigFile  string `ini:"ConfigFile"`
-	SystemProxy bool   `ini:"SystemProxy"`
+	ConfigFile        string `ini:"ConfigFile"`
+	SystemProxy       bool   `ini:"SystemProxy"`
 	ConfigPath        string `ini:"ConfigPath"`
 	HttpProxy         string `ini:"http_proxy"`
 	SocksProxy        string `ini:"socks_proxy"`
-	SeparateTunneling  string `ini:"separate_tunneling"`
+	SeparateTunneling string `ini:"separate_tunneling"`
+	LogLevel          string `ini:"log_level"`
+	LogFile           string `ini:"log_file"`
 }
 
 // LoadProgramState loads the last program state from system.ini
@@ -45,6 +47,8 @@ func LoadProgramState() (*ProgramState, error) {
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
 			ConfigPath:  filepath.Join(configPath, "config.vless"), // Default config path
+			LogLevel:    "warning",
+			LogFile:     "vless_client.log",
 		}, nil // Return default values if file not found or error
 	}
 
@@ -57,6 +61,8 @@ func LoadProgramState() (*ProgramState, error) {
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
 			ConfigPath:  filepath.Join(configPath, "config.vless"),
+			LogLevel:    "warning",
+			LogFile:     "vless_client.log",
 		}, nil
 	}
 
@@ -66,6 +72,14 @@ func LoadProgramState() (*ProgramState, error) {
 	state.HttpProxy = section.Key("http_proxy").String()
 	state.SocksProxy = section.Key("socks_proxy").String()
 	state.SeparateTunneling = section.Key("separate_tunneling").String()
+	state.LogLevel = section.Key("log_level").String()
+	state.LogFile = section.Key("log_file").String()
+	if state.LogLevel == "" {
+		state.LogLevel = "warning"
+	}
+	if state.LogFile == "" {
+		state.LogFile = "vless_client.log"
+	}
 
 	// If ConfigPath is not set, use the default platform-specific path
 	if state.ConfigPath == "" {
@@ -130,6 +144,8 @@ func SaveProgramState(state *ProgramState) error {
 	section.Key("http_proxy").SetValue(state.HttpProxy)
 	section.Key("socks_proxy").SetValue(state.SocksProxy)
 	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
+	section.Key("log_level").SetValue(state.LogLevel)
+	section.Key("log_file").SetValue(state.LogFile)
 
 	return cfg.SaveTo(systemIniPath)
 }
@@ -138,69 +154,72 @@ func SaveProgramState(state *ProgramState) error {
 var debugMode bool
 var logMode bool
 
+// Log configuration
+var logLevel string = "warning"
+var logFileName string = "vless_client.log"
+
 // Log writers
-var debugFile *os.File
 var logFile *os.File
 
-func debugLog(format string, args ...any) {
-	if debugMode {
-		msg := fmt.Sprintf("[DEBUG] "+format+"\n", args...)
-		if debugFile != nil {
-			debugFile.WriteString(msg)
-			debugFile.Sync()
-		}
+func levelAllows(level string) bool {
+	switch logLevel {
+	case "debug":
+		return true
+	case "warning":
+		return level == "warning" || level == "error" || level == "access"
+	default:
+		return false
 	}
+}
+
+func writeLog(prefix string, level string, format string, args ...any) {
+	if logFile == nil || !levelAllows(level) {
+		return
+	}
+	msg := fmt.Sprintf("["+prefix+"] "+format+"\n", args...)
+	logFile.WriteString(msg)
+	logFile.Sync()
+}
+
+func debugLog(format string, args ...any) {
+	writeLog("DEBUG", "debug", format, args...)
 }
 
 func infoLog(format string, args ...any) {
-	msg := fmt.Sprintf("[INFO] "+format+"\n", args...)
-	if logMode {
-		if logFile != nil {
-			logFile.WriteString(msg)
-			logFile.Sync()
-		}
-	}
+	writeLog("INFO", "debug", format, args...)
+}
+
+func warnLog(format string, args ...any) {
+	writeLog("WARNING", "warning", format, args...)
 }
 
 func errorLog(format string, args ...any) {
-	msg := fmt.Sprintf("[ERROR] "+format+"\n", args...)
-	if logMode {
-		if logFile != nil {
-			logFile.WriteString(msg)
-			logFile.Sync()
-		}
-	}
+	writeLog("ERROR", "error", format, args...)
+}
+
+func accessLog(format string, args ...any) {
+	writeLog("ACCESS", "access", format, args...)
 }
 
 // openLogFiles opens log files if needed
 func openLogFiles() error {
-	if debugMode {
-		var err error
-		debugFile, err = os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return err
-		}
-		debugLog("Debug log file opened")
+	if logLevel == "none" {
+		return nil
 	}
-
-	if logMode {
-		var err error
-		logFile, err = os.OpenFile("vless_client.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return err
-		}
-		infoLog("Main log file opened")
+	if logFileName == "" {
+		logFileName = "vless_client.log"
 	}
-
+	var err error
+	logFile, err = os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	accessLog("Main log file opened (level=%s)", logLevel)
 	return nil
 }
 
 // closeLogFiles closes log files
 func closeLogFiles() {
-	if debugFile != nil {
-		debugFile.Close()
-		debugFile = nil
-	}
 	if logFile != nil {
 		logFile.Close()
 		logFile = nil
@@ -218,32 +237,42 @@ func main() {
 
 	// Open log files if needed
 	if err := openLogFiles(); err != nil {
-		fmt.Printf("Error opening log files: %v\n", err)
 		os.Exit(1)
 	}
 	defer closeLogFiles()
 
+	// Load program state from system.ini
+	state, err := LoadProgramState()
+	if err != nil {
+		state = &ProgramState{
+			ConfigFile:  "config.json (TCP)",
+			SystemProxy: false,
+			ConfigPath:  filepath.Join(client.GetConfigFilesPath(), "config.vless"),
+			LogLevel:    "warning",
+			LogFile:     "vless_client.log",
+		}
+	}
 	if debugMode {
-		infoLog("Debug mode enabled")
+		logLevel = "debug"
+	} else if logMode {
+		logLevel = "warning"
+	} else if state.LogLevel != "" {
+		logLevel = state.LogLevel
+	}
+	if state.LogFile != "" {
+		logFileName = state.LogFile
+	}
+	// Re-open log file if level/filename determined after state load
+	closeLogFiles()
+	if err := openLogFiles(); err != nil {
+		os.Exit(1)
 	}
 
 	// Create hidden window for message handling (platform-specific)
 	if err := createHiddenWindow(); err != nil {
-		fmt.Printf("Error creating hidden window: %v\n", err)
 		os.Exit(1)
 	}
 	defer destroyHiddenWindow()
-
-	// Load program state from system.ini
-	state, err := LoadProgramState()
-	if err != nil {
-		infoLog("Warning: %v", err)
-		state = &ProgramState{
-			ConfigFile:  "config.json (TCP)",
-			SystemProxy: false,
-		}
-	}
-	infoLog("Loaded program state: ConfigFile=%s, SystemProxy=%v", state.ConfigFile, state.SystemProxy)
 
 	// Create Fyne app
 	a := app.New()
@@ -259,6 +288,12 @@ func main() {
 
 	// Setup system tray if supported (platform-specific)
 	setupSystemTray(w, a)
+
+	// Proxy is enabled by default only when no custom proxy addresses are set;
+	// otherwise the custom proxy is used and the system proxy stays disabled.
+	if state.HttpProxy == "" && state.SocksProxy == "" {
+		state.SystemProxy = true
+	}
 
 	// Load encrypted config
 	configStorage, err := client.LoadConfigFromVLESS(state.ConfigPath)
@@ -281,6 +316,7 @@ func main() {
 	} else {
 		cfg = configStorage.XHTTP
 	}
+	cfg.SeparateTunneling = state.SeparateTunneling
 
 	// Create client
 	clientInstance, err := client.NewClient(cfg)
@@ -391,6 +427,7 @@ func main() {
 		} else {
 			newCfg = configStorage.XHTTP
 		}
+		newCfg.SeparateTunneling = state.SeparateTunneling
 
 		cfg = newCfg
 		addressEntry.SetText(cfg.VLESS.Address)
@@ -409,7 +446,7 @@ func main() {
 		fingerprintSelect.SetSelected(cfg.VLESS.Fingerprint)
 		socksPortEntry.SetText(fmt.Sprintf("%d", cfg.SOCKS.Port))
 		httpPortEntry.SetText(fmt.Sprintf("%d", cfg.HTTP.Port))
-
+		cfg.SeparateTunneling = state.SeparateTunneling
 		clientInstance, err = client.NewClient(cfg)
 		if err != nil {
 			errorLog("Error creating client: %v", err)
@@ -475,6 +512,7 @@ func main() {
 			return
 		}
 
+		cfg.SeparateTunneling = state.SeparateTunneling
 		clientInstance, err = client.NewClient(cfg)
 		if err != nil {
 			configStatusLabel.SetText("Error: " + err.Error())
@@ -638,6 +676,7 @@ func main() {
 		fingerprintSelect.SetSelected(cfg.VLESS.Fingerprint)
 
 		// Recreate client instance with the imported configuration
+		cfg.SeparateTunneling = state.SeparateTunneling
 		clientInstance, err = client.NewClient(cfg)
 		if err != nil {
 			statusLabel.SetText("Error creating client: " + err.Error())
@@ -646,7 +685,6 @@ func main() {
 
 		statusLabel.SetText("Imported from clipboard")
 	})
-
 
 	// Load config button
 	loadConfigBtn := widget.NewButton("Load config", func() {
@@ -736,6 +774,7 @@ func main() {
 			socksPortEntry.SetText(fmt.Sprintf("%d", cfg.SOCKS.Port))
 			httpPortEntry.SetText(fmt.Sprintf("%d", cfg.HTTP.Port))
 
+			cfg.SeparateTunneling = state.SeparateTunneling
 			clientInstance, err = client.NewClient(cfg)
 			if err != nil {
 				statusLabel.SetText("Error: " + err.Error())
@@ -857,8 +896,17 @@ func main() {
 
 			statusLabel.SetText("Status: connected")
 			connectBtn.SetText("Disconnect")
-			httpProxyIndicator.SetText(fmt.Sprintf("HTTP Proxy: ✅ 127.0.0.1:%d", cfg.HTTP.Port))
-			socksProxyIndicator.SetText(fmt.Sprintf("SOCKS Proxy: ✅ 127.0.0.1:%d", cfg.SOCKS.Port))
+			accessLog("Client connected: SOCKS=127.0.0.1:%d HTTP=127.0.0.1:%d", cfg.SOCKS.Port, cfg.HTTP.Port)
+			httpProxyLabel := state.HttpProxy
+			if httpProxyLabel == "" {
+				httpProxyLabel = fmt.Sprintf("127.0.0.1:%d", cfg.HTTP.Port)
+			}
+			socksProxyLabel := state.SocksProxy
+			if socksProxyLabel == "" {
+				socksProxyLabel = fmt.Sprintf("127.0.0.1:%d", cfg.SOCKS.Port)
+			}
+			httpProxyIndicator.SetText("HTTP Proxy: ✅ " + httpProxyLabel)
+			socksProxyIndicator.SetText("SOCKS Proxy: ✅ " + socksProxyLabel)
 
 			viewConfigBtn.Disable()
 			configFileSelect.Disable()
@@ -870,6 +918,7 @@ func main() {
 			disableWindowsProxy()
 
 			statusLabel.SetText("Status: disconnected")
+			accessLog("Client disconnected")
 			connectBtn.SetText("Connect")
 			httpProxyIndicator.SetText("HTTP Proxy: ❌")
 			socksProxyIndicator.SetText("SOCKS Proxy: ❌")
@@ -895,6 +944,7 @@ func main() {
 				systemProxyIndicator.SetText("System Proxy: ✅")
 				systemProxyBtn.SetText("System Proxy (off)")
 				state.SystemProxy = true
+				accessLog("System proxy enabled")
 			}
 
 			if err := SaveProgramState(state); err != nil {

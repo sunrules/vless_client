@@ -1,14 +1,14 @@
 // Linux-specific implementation for VLESS Client (both GUI and headless versions)
 // $env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"; go build -v -tags "headless" -o vless_client
 
-// +build linux
+//go:build linux && linux && headless
+// +build linux,linux,headless
 
 package main
 
 import (
 	"flag"
 	"fmt"
-	"v2/client"
 	_ "github.com/xtls/xray-core/main/distro/all" // Import all config formats (JSON, YAML, TOML)
 	"gopkg.in/ini.v1"
 	"os"
@@ -17,13 +17,19 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"vless_client/client"
 )
 
 // ProgramState represents the last state of the program
 type ProgramState struct {
-	ConfigFile  string `ini:"ConfigFile"`
-	SystemProxy bool   `ini:"SystemProxy"`
-	ConfigPath  string `ini:"ConfigPath"`
+	ConfigFile        string `ini:"ConfigFile"`
+	SystemProxy       bool   `ini:"SystemProxy"`
+	ConfigPath        string `ini:"ConfigPath"`
+	HttpProxy         string `ini:"http_proxy"`
+	SocksProxy        string `ini:"socks_proxy"`
+	SeparateTunneling string `ini:"separate_tunneling"`
+	LogLevel          string `ini:"log_level"`
+	LogFile           string `ini:"log_file"`
 }
 
 // LoadProgramState loads the last program state from system.ini
@@ -42,6 +48,8 @@ func LoadProgramState() (*ProgramState, error) {
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
 			ConfigPath:  filepath.Join(configPath, "config.vless"), // Default config path
+			LogLevel:    "warning",
+			LogFile:     "vless_client.log",
 		}, nil // Return default values if file not found or error
 	}
 
@@ -60,6 +68,17 @@ func LoadProgramState() (*ProgramState, error) {
 	state.ConfigFile = section.Key("ConfigFile").String()
 	state.SystemProxy, _ = section.Key("SystemProxy").Bool()
 	state.ConfigPath = section.Key("ConfigPath").String()
+	state.HttpProxy = section.Key("http_proxy").String()
+	state.SocksProxy = section.Key("socks_proxy").String()
+	state.SeparateTunneling = section.Key("separate_tunneling").String()
+	state.LogLevel = section.Key("log_level").String()
+	state.LogFile = section.Key("log_file").String()
+	if state.LogLevel == "" {
+		state.LogLevel = "warning"
+	}
+	if state.LogFile == "" {
+		state.LogFile = "vless_client.log"
+	}
 
 	// If ConfigPath is not set, use the default platform-specific path
 	if state.ConfigPath == "" {
@@ -121,6 +140,11 @@ func SaveProgramState(state *ProgramState) error {
 	section.Key("ConfigFile").SetValue(state.ConfigFile)
 	section.Key("SystemProxy").SetValue(fmt.Sprintf("%v", state.SystemProxy))
 	section.Key("ConfigPath").SetValue(state.ConfigPath)
+	section.Key("http_proxy").SetValue(state.HttpProxy)
+	section.Key("socks_proxy").SetValue(state.SocksProxy)
+	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
+	section.Key("log_level").SetValue(state.LogLevel)
+	section.Key("log_file").SetValue(state.LogFile)
 
 	return cfg.SaveTo(systemIniPath)
 }
@@ -236,75 +260,77 @@ func executeCmd(cmd string) error {
 }
 
 // Headless-specific code
-// +build linux,headless
 
 // Global flags
 var debugMode bool
 var logMode bool
 
+// Log configuration
+var logLevel string = "warning"
+var logFileName string = "vless_client.log"
+
 // Log writers
-var debugFile *os.File
 var logFile *os.File
 
-func debugLog(format string, args ...any) {
-	if debugMode {
-		msg := fmt.Sprintf("[DEBUG] "+format+"\n", args...)
-		if debugFile != nil {
-			debugFile.WriteString(msg)
-			debugFile.Sync()
-		}
+func levelAllows(level string) bool {
+	switch logLevel {
+	case "debug":
+		return true
+	case "warning":
+		return level == "warning" || level == "error" || level == "access"
+	default:
+		return false
 	}
+}
+
+func writeLog(prefix string, level string, format string, args ...any) {
+	if logFile == nil || !levelAllows(level) {
+		return
+	}
+	msg := fmt.Sprintf("["+prefix+"] "+format+"\n", args...)
+	logFile.WriteString(msg)
+	logFile.Sync()
+}
+
+func debugLog(format string, args ...any) {
+	writeLog("DEBUG", "debug", format, args...)
 }
 
 func infoLog(format string, args ...any) {
-	msg := fmt.Sprintf("[INFO] "+format+"\n", args...)
-	if logMode {
-		if logFile != nil {
-			logFile.WriteString(msg)
-			logFile.Sync()
-		}
-	}
+	writeLog("INFO", "debug", format, args...)
+}
+
+func warnLog(format string, args ...any) {
+	writeLog("WARNING", "warning", format, args...)
 }
 
 func errorLog(format string, args ...any) {
-	msg := fmt.Sprintf("[ERROR] "+format+"\n", args...)
-	if logMode {
-		if logFile != nil {
-			logFile.WriteString(msg)
-			logFile.Sync()
-		}
-	}
+	writeLog("ERROR", "error", format, args...)
+}
+
+func accessLog(format string, args ...any) {
+	writeLog("ACCESS", "access", format, args...)
 }
 
 // openLogFiles opens log files if needed
 func openLogFiles() error {
-	if debugMode {
-		var err error
-		debugFile, err = os.OpenFile("debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return err
-		}
-		debugLog("Debug log file opened")
+	if logLevel == "none" {
+		return nil
 	}
-
-	if logMode {
-		var err error
-		logFile, err = os.OpenFile("vless_client.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			return err
-		}
-		infoLog("Main log file opened")
+	if logFileName == "" {
+		logFileName = "vless_client.log"
 	}
-
+	var err error
+	logFile, err = os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	accessLog("Main log file opened (level=%s)", logLevel)
 	return nil
 }
 
 // closeLogFiles closes log files
 func closeLogFiles() {
-	if debugFile != nil {
-		debugFile.Close()
-		debugFile = nil
-	}
 	if logFile != nil {
 		logFile.Close()
 		logFile = nil
@@ -320,27 +346,33 @@ func main() {
 	flag.BoolVar(&logMode, "log", false, "Enable detailed logging to file")
 	flag.Parse()
 
-	// Open log files if needed
-	if err := openLogFiles(); err != nil {
-		fmt.Printf("Error opening log files: %v\n", err)
-		os.Exit(1)
-	}
-	defer closeLogFiles()
-
-	if debugMode {
-		infoLog("Debug mode enabled")
-	}
-
 	// Load program state from system.ini
 	state, err := LoadProgramState()
 	if err != nil {
-		infoLog("Warning: %v", err)
 		state = &ProgramState{
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
+			ConfigPath:  filepath.Join(client.GetConfigFilesPath(), "config.vless"),
+			LogLevel:    "warning",
+			LogFile:     "vless_client.log",
 		}
 	}
-	infoLog("Loaded program state: ConfigFile=%s, SystemProxy=%v", state.ConfigFile, state.SystemProxy)
+	if debugMode {
+		logLevel = "debug"
+	} else if logMode {
+		logLevel = "warning"
+	} else if state.LogLevel != "" {
+		logLevel = state.LogLevel
+	}
+	if state.LogFile != "" {
+		logFileName = state.LogFile
+	}
+
+	// Open log files if needed
+	if err := openLogFiles(); err != nil {
+		os.Exit(1)
+	}
+	defer closeLogFiles()
 
 	// Load encrypted config
 	configStorage, err := client.LoadConfigFromVLESS(state.ConfigPath)
@@ -363,6 +395,7 @@ func main() {
 	} else {
 		cfg = configStorage.XHTTP
 	}
+	cfg.SeparateTunneling = state.SeparateTunneling
 
 	// Create client
 	clientInstance, err := client.NewClient(cfg)

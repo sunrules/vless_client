@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/xtls/xray-core/core"
 	_ "github.com/xtls/xray-core/main/distro/all" // Import all config formats (JSON, YAML, TOML)
@@ -302,16 +304,31 @@ func BuildXrayConfigJSON(cfg *Config) ([]byte, error) {
 		"protocol": "blackhole",
 	})
 
-	// Routing: all traffic through VLESS (no geosite/geoip files needed)
+	// Routing: traffic through VLESS by default, separate_tunneling bypasses VPN (direct)
+	rules := []interface{}{}
+	bypassDomains, bypassIPs := parseSeparateTunneling(cfg.SeparateTunneling)
+	if len(bypassDomains) > 0 {
+		rules = append(rules, map[string]interface{}{
+			"type":        "field",
+			"outboundTag": "direct",
+			"domain":      bypassDomains,
+		})
+	}
+	if len(bypassIPs) > 0 {
+		rules = append(rules, map[string]interface{}{
+			"type":        "field",
+			"outboundTag": "direct",
+			"ip":          bypassIPs,
+		})
+	}
+	rules = append(rules, map[string]interface{}{
+		"type":        "field",
+		"outboundTag": "proxy",
+		"domain":      []interface{}{"regexp:.*"}, // All other domains
+	})
 	xrayCfg["routing"] = map[string]interface{}{
 		"domainStrategy": "IPIfNonMatch",
-		"rules": []interface{}{
-			map[string]interface{}{
-				"type":        "field",
-				"outboundTag": "proxy",
-				"domain":      []interface{}{"regexp:.*"}, // All domains (regex)
-			},
-		},
+		"rules":          rules,
 	}
 
 	result, err := json.MarshalIndent(xrayCfg, "", "  ")
@@ -322,13 +339,40 @@ func BuildXrayConfigJSON(cfg *Config) ([]byte, error) {
 	return result, nil
 }
 
+// parseSeparateTunneling splits a comma-separated bypass list into domains and IP addresses
+// suitable for xray-core routing rules.
+func parseSeparateTunneling(s string) ([]string, []string) {
+	domains := []string{}
+	ips := []string{}
+	for _, part := range strings.Split(s, ",") {
+		item := strings.TrimSpace(part)
+		if item == "" {
+			continue
+		}
+		if ip := net.ParseIP(item); ip != nil {
+			ips = append(ips, item)
+			continue
+		}
+		if strings.HasPrefix(item, "*.") {
+			domains = append(domains, strings.TrimPrefix(item, "*."))
+			continue
+		}
+		if strings.HasPrefix(item, ".") {
+			domains = append(domains, strings.TrimPrefix(item, "."))
+			continue
+		}
+		domains = append(domains, item)
+	}
+	return domains, ips
+}
+
 // NewClient creates a new VLESS client
 func NewClient(cfg *Config) (*Client, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Client{
-		config:  cfg,
-		ctx:     ctx,
-		cancel:  cancel,
+		config: cfg,
+		ctx:    ctx,
+		cancel: cancel,
 	}, nil
 }
 

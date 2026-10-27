@@ -33,9 +33,10 @@ type ConfigStorage struct {
 
 // Config - full client configuration
 type Config struct {
-	VLESS     *VLESSConfig     `json:"vless"`
-	Transport *TransportConfig `json:"transport,omitempty"`
-	SOCKS     struct {
+	VLESS             *VLESSConfig     `json:"vless"`
+	Transport         *TransportConfig `json:"transport,omitempty"`
+	SeparateTunneling string           `json:"separate_tunneling,omitempty"`
+	SOCKS             struct {
 		Enabled bool `json:"enabled"`
 		Port    int  `json:"port"`
 	} `json:"socks"`

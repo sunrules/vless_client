@@ -260,15 +260,15 @@ func executeCommand(cmd string) (string, error) {
 
 // Internet Explorer/WinINet constants for proxy notification
 const (
-	INTERNET_OPTION_REFRESH              = 37
-	INTERNET_OPTION_SETTINGS_CHANGED     = 39
+	INTERNET_OPTION_REFRESH               = 37
+	INTERNET_OPTION_SETTINGS_CHANGED      = 39
 	INTERNET_OPTION_PER_CONNECTION_OPTION = 75
-	WM_SETTINGCHANGE                     = 0x001A
+	WM_SETTINGCHANGE                      = 0x001A
 
 	// INTERNET_PER_CONN_OPTION constants
-	INTERNET_PER_CONN_FLAGS         = 1
-	INTERNET_PER_CONN_PROXY_SERVER  = 2
-	INTERNET_PER_CONN_PROXY_BYPASS  = 3
+	INTERNET_PER_CONN_FLAGS        = 1
+	INTERNET_PER_CONN_PROXY_SERVER = 2
+	INTERNET_PER_CONN_PROXY_BYPASS = 3
 
 	// Proxy flags
 	PROXY_TYPE_DIRECT = 0x00000001
@@ -381,6 +381,13 @@ func notifyWindowsProxyChange(proxyServer string, proxyEnabled bool) error {
 
 // enableWindowsProxy enables system proxy in Windows registry
 func enableWindowsProxy(socksPort, httpPort int, exceptions string) error {
+	socksProxy := "127.0.0.1:" + fmt.Sprintf("%d", socksPort)
+	httpProxy := "127.0.0.1:" + fmt.Sprintf("%d", httpPort)
+	return enableWindowsProxyAddr(socksProxy, httpProxy, exceptions)
+}
+
+// enableWindowsProxyAddr enables system proxy in Windows registry using provided addresses
+func enableWindowsProxyAddr(socksProxy, httpProxy string, exceptions string) error {
 	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.ALL_ACCESS)
 	if err != nil {
 		return err
@@ -391,8 +398,6 @@ func enableWindowsProxy(socksPort, httpPort int, exceptions string) error {
 		return err
 	}
 
-	httpProxy := `127.0.0.1:` + fmt.Sprintf("%d", httpPort)
-	socksProxy := `127.0.0.1:` + fmt.Sprintf("%d", socksPort)
 	// Use http= prefix for all protocols - Windows sets proxy for all protocols when http= is used
 	proxyAddr := "http=" + httpProxy + ";https=" + httpProxy + ";socks=" + socksProxy
 
