@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"flag"
 	"fmt"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -27,6 +26,8 @@ type ProgramState struct {
 	HttpProxy         string `ini:"http_proxy"`
 	SocksProxy        string `ini:"socks_proxy"`
 	SeparateTunneling  string `ini:"separate_tunneling"`
+	LogLevel          string `ini:"log_level"`
+	LogFile           string `ini:"log_file"`
 }
 
 // LoadProgramState loads the last program state from system.ini
@@ -66,6 +67,14 @@ func LoadProgramState() (*ProgramState, error) {
 	state.HttpProxy = section.Key("http_proxy").String()
 	state.SocksProxy = section.Key("socks_proxy").String()
 	state.SeparateTunneling = section.Key("separate_tunneling").String()
+	state.LogLevel = section.Key("log_level").String()
+	state.LogFile = section.Key("log_file").String()
+	if state.LogLevel == "" {
+		state.LogLevel = "debug"
+	}
+	if state.LogFile == "" {
+		state.LogFile = "vless_client.log"
+	}
 
 	// If ConfigPath is not set, use the default platform-specific path
 	if state.ConfigPath == "" {
@@ -130,6 +139,8 @@ func SaveProgramState(state *ProgramState) error {
 	section.Key("http_proxy").SetValue(state.HttpProxy)
 	section.Key("socks_proxy").SetValue(state.SocksProxy)
 	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
+	section.Key("log_level").SetValue(state.LogLevel)
+	section.Key("log_file").SetValue(state.LogFile)
 
 	return cfg.SaveTo(systemIniPath)
 }
@@ -137,6 +148,7 @@ func SaveProgramState(state *ProgramState) error {
 // Global flags
 var debugMode bool
 var logMode bool
+var logFileName = "vless_client.log"
 
 // Log writers
 var debugFile *os.File
@@ -185,7 +197,7 @@ func openLogFiles() error {
 
 	if logMode {
 		var err error
-		logFile, err = os.OpenFile("vless_client.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		logFile, err = os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
 			return err
 		}
@@ -211,39 +223,38 @@ func main() {
 	// Check for single instance (platform-specific)
 	CheckSingleInstance()
 
-	// Parse command line arguments
-	flag.BoolVar(&debugMode, "debug", false, "Enable debug mode")
-	flag.BoolVar(&logMode, "log", false, "Enable detailed logging to file")
-	flag.Parse()
-
+	// Load program state from system.ini
+	state, err := LoadProgramState()
+	if err != nil {
+		state = &ProgramState{
+			ConfigFile:  "config.json (TCP)",
+			SystemProxy: false,
+		}
+	}
+	// Configure logging from state
+	switch state.LogLevel {
+	case "debug":
+		debugMode = true
+		logMode = true
+	case "warning":
+		debugMode = false
+		logMode = true
+	case "none":
+		debugMode = false
+		logMode = false
+	default:
+		debugMode = true
+		logMode = true
+	}
+	if state.LogFile != "" {
+		logFileName = state.LogFile
+	}
 	// Open log files if needed
 	if err := openLogFiles(); err != nil {
 		fmt.Printf("Error opening log files: %v\n", err)
 		os.Exit(1)
 	}
 	defer closeLogFiles()
-
-	if debugMode {
-		infoLog("Debug mode enabled")
-	}
-
-	// Create hidden window for message handling (platform-specific)
-	if err := createHiddenWindow(); err != nil {
-		fmt.Printf("Error creating hidden window: %v\n", err)
-		os.Exit(1)
-	}
-	defer destroyHiddenWindow()
-
-	// Load program state from system.ini
-	state, err := LoadProgramState()
-	if err != nil {
-		infoLog("Warning: %v", err)
-		state = &ProgramState{
-			ConfigFile:  "config.json (TCP)",
-			SystemProxy: false,
-		}
-	}
-	infoLog("Loaded program state: ConfigFile=%s, SystemProxy=%v", state.ConfigFile, state.SystemProxy)
 
 	// Create Fyne app
 	a := app.New()
@@ -548,7 +559,7 @@ func main() {
 			return
 		}
 
-		if _, err := client.BuildXrayConfigJSON(tempCfg); err != nil {
+		if _, err := client.BuildXrayConfigJSON(tempCfg, ""); err != nil {
 			configStatusLabel.SetText("Error: " + err.Error())
 			return
 		}
@@ -836,6 +847,7 @@ func main() {
 	// Main buttons
 	connectBtn = widget.NewButton("Connect", func() {
 		if !clientInstance.IsRunning() {
+			clientInstance.SetBypass(state.SeparateTunneling)
 			if err := clientInstance.Start(); err != nil {
 				statusLabel.SetText("Error: " + err.Error())
 				return

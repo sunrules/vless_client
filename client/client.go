@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/xtls/xray-core/core"
 	_ "github.com/xtls/xray-core/main/distro/all" // Import all config formats (JSON, YAML, TOML)
@@ -17,6 +18,7 @@ import (
 type Client struct {
 	core    *core.Instance
 	config  *Config
+	bypass  string
 	running bool
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -124,7 +126,7 @@ func SaveConfigToVLESS(storage *ConfigStorage, configPath string) error {
 }
 
 // BuildXrayConfigJSON generates JSON config for xray-core
-func BuildXrayConfigJSON(cfg *Config) ([]byte, error) {
+func BuildXrayConfigJSON(cfg *Config, bypass string) ([]byte, error) {
 	// Build config in xray-core format
 	xrayCfg := map[string]interface{}{
 		"log": map[string]interface{}{
@@ -302,16 +304,59 @@ func BuildXrayConfigJSON(cfg *Config) ([]byte, error) {
 		"protocol": "blackhole",
 	})
 
-	// Routing: all traffic through VLESS (no geosite/geoip files needed)
+	// Routing: all traffic through VLESS, except separate_tunneling list
+	rules := []interface{}{}
+	for _, item := range strings.Split(bypass, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if strings.Contains(item, "*") {
+			// convert *.example.ru -> domain:example.ru
+			pattern := strings.TrimPrefix(item, "*.")
+			rules = append(rules, map[string]interface{}{
+				"type":        "field",
+				"outboundTag": "direct",
+				"domain":      []interface{}{"domain:" + pattern},
+			})
+		} else if strings.Contains(item, ".") && !strings.Contains(item, ":") {
+			// crude IP vs domain: if all digits/dots -> ip
+			isIP := true
+			for _, c := range item {
+				if !(c == '.' || (c >= '0' && c <= '9')) {
+					isIP = false
+					break
+				}
+			}
+			if isIP {
+				rules = append(rules, map[string]interface{}{
+					"type":        "field",
+					"outboundTag": "direct",
+					"ip":          []interface{}{item},
+				})
+			} else {
+				rules = append(rules, map[string]interface{}{
+					"type":        "field",
+					"outboundTag": "direct",
+					"domain":      []interface{}{item},
+				})
+			}
+		} else {
+			rules = append(rules, map[string]interface{}{
+				"type":        "field",
+				"outboundTag": "direct",
+				"domain":      []interface{}{item},
+			})
+		}
+	}
+	rules = append(rules, map[string]interface{}{
+		"type":        "field",
+		"outboundTag": "proxy",
+		"domain":      []interface{}{"regexp:.*"},
+	})
 	xrayCfg["routing"] = map[string]interface{}{
 		"domainStrategy": "IPIfNonMatch",
-		"rules": []interface{}{
-			map[string]interface{}{
-				"type":        "field",
-				"outboundTag": "proxy",
-				"domain":      []interface{}{"regexp:.*"}, // All domains (regex)
-			},
-		},
+		"rules":          rules,
 	}
 
 	result, err := json.MarshalIndent(xrayCfg, "", "  ")
@@ -347,7 +392,7 @@ func (c *Client) Start() error {
 	}
 
 	// Generate JSON config
-	jsonCfg, err := BuildXrayConfigJSON(c.config)
+	jsonCfg, err := BuildXrayConfigJSON(c.config, c.bypass)
 	if err != nil {
 		return fmt.Errorf("error creating config: %w", err)
 	}
@@ -387,6 +432,11 @@ func (c *Client) Stop() error {
 	c.cancel() // Cancel the context
 
 	return nil
+}
+
+// SetBypass sets separate tunneling list
+func (c *Client) SetBypass(bypass string) {
+	c.bypass = bypass
 }
 
 // IsRunning returns running status

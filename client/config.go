@@ -35,14 +35,6 @@ type ConfigStorage struct {
 type Config struct {
 	VLESS     *VLESSConfig     `json:"vless"`
 	Transport *TransportConfig `json:"transport,omitempty"`
-	SOCKS     struct {
-		Enabled bool `json:"enabled"`
-		Port    int  `json:"port"`
-	} `json:"socks"`
-	HTTP struct {
-		Enabled bool `json:"enabled"`
-		Port    int  `json:"port"`
-	} `json:"http"`
 }
 
 // VLESSConfig contains VLESS client settings
@@ -239,10 +231,6 @@ func GetDefaultTCPConfig() *Config {
 			Mode: "stream",
 		},
 	}
-	cfg.SOCKS.Enabled = true
-	cfg.SOCKS.Port = 1080
-	cfg.HTTP.Enabled = true
-	cfg.HTTP.Port = 1082
 	return cfg
 }
 
@@ -265,10 +253,6 @@ func GetDefaultXHTTPConfig() *Config {
 			Mode: "packet-up",
 		},
 	}
-	cfg.SOCKS.Enabled = true
-	cfg.SOCKS.Port = 1080
-	cfg.HTTP.Enabled = true
-	cfg.HTTP.Port = 1082
 	return cfg
 }
 
@@ -332,12 +316,6 @@ func ValidateConfig(cfg *Config) error {
 	}
 	if cfg.VLESS.Port <= 0 || cfg.VLESS.Port > 65535 {
 		return fmt.Errorf("invalid port number: %d", cfg.VLESS.Port)
-	}
-	if cfg.SOCKS.Port <= 0 || cfg.SOCKS.Port > 65535 {
-		return fmt.Errorf("invalid SOCKS port: %d", cfg.SOCKS.Port)
-	}
-	if cfg.HTTP.Port <= 0 || cfg.HTTP.Port > 65535 {
-		return fmt.Errorf("invalid HTTP port: %d", cfg.HTTP.Port)
 	}
 	if cfg.VLESS.Security == "reality" {
 		if cfg.VLESS.PublicKey == "" {
