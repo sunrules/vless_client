@@ -47,7 +47,6 @@ func LoadProgramState() (*ProgramState, error) {
 		return &ProgramState{
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
-			ConfigPath:  filepath.Join(configPath, "config.vless"), // Default config path
 			LogLevel:    "warning",
 			LogFile:     "vless_client.log",
 		}, nil // Return default values if file not found or error
@@ -61,13 +60,11 @@ func LoadProgramState() (*ProgramState, error) {
 		return &ProgramState{
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
-			ConfigPath:  filepath.Join(configPath, "config.vless"),
 		}, nil
 	}
 
 	state.ConfigFile = section.Key("ConfigFile").String()
 	state.SystemProxy, _ = section.Key("SystemProxy").Bool()
-	state.ConfigPath = section.Key("ConfigPath").String()
 	state.HttpProxy = section.Key("http_proxy").String()
 	state.SocksProxy = section.Key("socks_proxy").String()
 	state.SeparateTunneling = section.Key("separate_tunneling").String()
@@ -80,31 +77,12 @@ func LoadProgramState() (*ProgramState, error) {
 		state.LogFile = "vless_client.log"
 	}
 
-	// If ConfigPath is not set, use the default platform-specific path
-	if state.ConfigPath == "" {
-		state.ConfigPath = filepath.Join(configPath, "config.vless")
-	}
-
-	// Strip file:// prefix if present (for Android URI)
-	if len(state.ConfigPath) > 7 && state.ConfigPath[:7] == "file://" {
-		state.ConfigPath = state.ConfigPath[7:]
-		// On Windows, file:///D:/... becomes /D:/..., so we need to trim leading slash
-		if len(state.ConfigPath) > 0 && state.ConfigPath[0] == '/' && len(state.ConfigPath) > 2 && state.ConfigPath[2] == ':' {
-			state.ConfigPath = state.ConfigPath[1:]
-		}
-	}
-
 	// Validate config file value
 	if state.ConfigFile != "config.json (TCP)" && state.ConfigFile != "config_xhttp.json (XHTTP)" {
 		state.ConfigFile = "config.json (TCP)"
 	}
 
-	// Ensure ConfigPath is always set to the platform-specific location
-	if state.ConfigPath == "" || !filepath.IsAbs(state.ConfigPath) {
-		state.ConfigPath = filepath.Join(configPath, "config.vless")
-	}
-
-	infoLog("LoadProgramState: ConfigFile=%s, SystemProxy=%v, ConfigPath=%s", state.ConfigFile, state.SystemProxy, state.ConfigPath)
+	infoLog("LoadProgramState: ConfigFile=%s, SystemProxy=%v", state.ConfigFile, state.SystemProxy)
 	return state, nil
 }
 
@@ -116,11 +94,6 @@ func SaveProgramState(state *ProgramState) error {
 	// Get the correct path for system.ini based on platform
 	configPath := client.GetConfigFilesPath()
 	systemIniPath := filepath.Join(configPath, "system.ini")
-
-	// If ConfigPath is not set, use the default platform-specific path
-	if state.ConfigPath == "" || !filepath.IsAbs(state.ConfigPath) {
-		state.ConfigPath = filepath.Join(configPath, "config.vless")
-	}
 
 	// Load or create system.ini
 	cfg, err = ini.Load(systemIniPath)
@@ -139,7 +112,6 @@ func SaveProgramState(state *ProgramState) error {
 
 	section.Key("ConfigFile").SetValue(state.ConfigFile)
 	section.Key("SystemProxy").SetValue(fmt.Sprintf("%v", state.SystemProxy))
-	section.Key("ConfigPath").SetValue(state.ConfigPath)
 	section.Key("http_proxy").SetValue(state.HttpProxy)
 	section.Key("socks_proxy").SetValue(state.SocksProxy)
 	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
@@ -352,7 +324,6 @@ func main() {
 		state = &ProgramState{
 			ConfigFile:  "config.json (TCP)",
 			SystemProxy: false,
-			ConfigPath:  filepath.Join(client.GetConfigFilesPath(), "config.vless"),
 			LogLevel:    "warning",
 			LogFile:     "vless_client.log",
 		}
@@ -375,17 +346,10 @@ func main() {
 	defer closeLogFiles()
 
 	// Load encrypted config
-	configStorage, err := client.LoadConfigFromVLESS(state.ConfigPath)
+	configStorage, err := client.LoadConfigFromVLESS(filepath.Join(client.GetConfigFilesPath(), "config.vless"))
 	if err != nil {
-		infoLog("Warning: %v", err)
-		infoLog("Using default settings")
-		configStorage = &client.ConfigStorage{
-			TCP:   client.GetDefaultTCPConfig(),
-			XHTTP: client.GetDefaultXHTTPConfig(),
-		}
-		if err := client.SaveConfigToVLESS(configStorage, state.ConfigPath); err != nil {
-			errorLog("Failed to save default config: %v", err)
-		}
+		errorLog("Failed to load config: %v", err)
+		os.Exit(1)
 	}
 
 	// Get initial config based on saved state

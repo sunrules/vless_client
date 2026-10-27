@@ -41,16 +41,11 @@ func LoadConfigFromVLESS(configPath string) (*ConfigStorage, error) {
 	}
 
 	data, err := os.ReadFile(configPath)
-	if err != nil || len(data) == 0 {
-		// If file not found or empty, create default config
-		defaultStorage := &ConfigStorage{
-			TCP:   GetDefaultTCPConfig(),
-			XHTTP: GetDefaultXHTTPConfig(),
-		}
-		if err := SaveConfigToVLESS(defaultStorage, configPath); err != nil {
-			return nil, err
-		}
-		return defaultStorage, nil
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("config file is empty: %s", configPath)
 	}
 
 	// Decrypt data
