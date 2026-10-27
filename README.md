@@ -17,9 +17,10 @@ This is a GUI client for working with the VLESS protocol and Reality technology.
 - **IPv6 support**: IPv6 addresses are automatically wrapped in brackets (`[::1]`) as required by xray-core
 - **System tray**: Support for working from the system tray (minimize window instead of closing)
 - **Windows system proxy**: Automatic enabling/disabling of the system proxy
+- **Separate tunneling**: Comma-separated list of domains/IPs in `system.ini` (`separate_tunneling`) that bypass the VPN, applied both via Windows proxy exceptions and xray-core routing rules
 - **UAC (Loopback Route)**: (User Account Control) Management of static route for loopback interface with high priority. Improves access to local resources and bypasses VPN/proxy for local traffic.
 - **Configuration check**: "Check Configuration" button to validate settings
-- **Logging**: Support for logging mode with saving to `debug.log` and `vless_client.log` files
+- **Logging**: Configurable log levels (`debug`, `warning`, `none`) via `system.ini` (`log_level`), single output file `vless_client.log`, no console output
 - Automatic saving of configuration file
 - "Set Default" button for quick restoration of default settings
 
@@ -312,27 +313,22 @@ For XHTTP to work, you need a server with support for this protocol. Example ser
 
 ## Logging
 
-### Logging Modes
+Logging is configured in `system.ini`:
 
-- **Debug mode**: Detailed information for debugging (file `debug.log`)
-- **Log mode**: Main events (file `vless_client.log`)
-
-```bash
-# Run with debugging
-.\vless_client.exe -debug
-
-# Run with logging
-.\vless_client.exe -log
-
-# Run with both modes
-.\vless_client.exe -debug -log
+```ini
+; log_level: debug, warning, none
+log_level          = warning
+; log file name (created in the same directory where the utility is launched)
+log_file           = vless_client.log
 ```
 
-### Log Structure
+- **debug** — full logging: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `ACCESS`.
+- **warning** — `WARNING`, `ERROR`, `ACCESS` only.
+- **none** — logging disabled, no file is created.
 
-- `[DEBUG]`: Detailed information for developers
-- `[INFO]`: Main client operation events
-- `[ERROR]`: Errors and critical issues
+All log output goes only to `vless_client.log`; nothing is written to the console.
+
+Command-line flags `-debug` and `-log` can override the level for a single run.
 
 ## UAC (Loopback Route) Mode
 
