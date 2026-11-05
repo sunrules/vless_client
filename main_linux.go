@@ -9,8 +9,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	_ "github.com/xtls/xray-core/main/distro/all" // Import all config formats (JSON, YAML, TOML)
-	"gopkg.in/ini.v1"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,6 +16,9 @@ import (
 	"strings"
 	"syscall"
 	"vless_client/client"
+
+	_ "github.com/xtls/xray-core/main/distro/all" // Import all config formats (JSON, YAML, TOML)
+	"gopkg.in/ini.v1"
 )
 
 // ProgramState represents the last state of the program
