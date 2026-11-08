@@ -1,6 +1,6 @@
 // Linux-specific implementation for VLESS Client (both GUI and headless versions)
-// $env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"; go build -tags "headless" -o vless_client .
-
+// $env:CGO_ENABLED = "1"; $env:GOOS = "linux"; $env:GOARCH = "amd64"; go build -o vless_client .
+// GO_ENABLED=1 go build -o vless_client .
 //go:build linux && linux && headless
 // +build linux,linux,headless
 
