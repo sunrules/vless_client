@@ -26,8 +26,6 @@ import (
 type ProgramState struct {
 	ConfigFile        string `ini:"ConfigFile"`
 	SystemProxy       bool   `ini:"SystemProxy"`
-	HttpProxy         string `ini:"http_proxy"`
-	SocksProxy        string `ini:"socks_proxy"`
 	SeparateTunneling string `ini:"separate_tunneling"`
 	LogLevel          string `ini:"log_level"`
 	LogFile           string `ini:"log_file"`
@@ -68,8 +66,6 @@ func LoadProgramState() (*ProgramState, error) {
 
 	state.ConfigFile = section.Key("ConfigFile").String()
 	state.SystemProxy, _ = section.Key("SystemProxy").Bool()
-	state.HttpProxy = section.Key("http_proxy").String()
-	state.SocksProxy = section.Key("socks_proxy").String()
 	state.SeparateTunneling = section.Key("separate_tunneling").String()
 	state.LogLevel = section.Key("log_level").String()
 	state.LogFile = section.Key("log_file").String()
@@ -115,8 +111,6 @@ func SaveProgramState(state *ProgramState) error {
 
 	section.Key("ConfigFile").SetValue(state.ConfigFile)
 	section.Key("SystemProxy").SetValue(fmt.Sprintf("%v", state.SystemProxy))
-	section.Key("http_proxy").SetValue(state.HttpProxy)
-	section.Key("socks_proxy").SetValue(state.SocksProxy)
 	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
 	section.Key("log_level").SetValue(state.LogLevel)
 	section.Key("log_file").SetValue(state.LogFile)
@@ -200,6 +194,22 @@ func closeLogFiles() {
 	}
 }
 
+// guiDebugLogFile holds the stderr-redirect file for GUI error debugging
+var guiDebugLogFile *os.File
+
+// redirectStderrForDebug opens gui_debug.log and points os.Stderr to it.
+// This captures Go-level errors from GLFW/Fyne that would otherwise be
+// invisible with -H=windowsgui on Windows (no console attached).
+func redirectStderrForDebug() {
+	f, err := os.OpenFile("gui_debug.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "debug: cannot open gui_debug.log: %v\n", err)
+		return
+	}
+	guiDebugLogFile = f
+	os.Stderr = f
+}
+
 func main() {
 	// Check for single instance (platform-specific)
 	CheckSingleInstance()
@@ -214,6 +224,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer closeLogFiles()
+	defer func() {
+		if guiDebugLogFile != nil {
+			guiDebugLogFile.Close()
+			guiDebugLogFile = nil
+		}
+	}()
 
 	// Load program state from system.ini
 	state, err := LoadProgramState()
@@ -241,11 +257,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create hidden window for message handling (platform-specific)
-	if err := createHiddenWindow(); err != nil {
-		os.Exit(1)
+	// In debug mode capture GUI errors (GLFW/OpenGL, Fyne) to gui_debug.log
+	if debugMode {
+		redirectStderrForDebug()
+		debugLog("GUI debug logging enabled: stderr is also written to gui_debug.log")
 	}
-	defer destroyHiddenWindow()
 
 	// Create Fyne app
 	a := app.New()
@@ -262,11 +278,10 @@ func main() {
 	// Setup system tray if supported (platform-specific)
 	setupSystemTray(w, a)
 
-	// Proxy is enabled by default only when no custom proxy addresses are set;
-	// otherwise the custom proxy is used and the system proxy stays disabled.
-	if state.HttpProxy == "" && state.SocksProxy == "" {
-		state.SystemProxy = true
-	}
+	// Proxy is enabled by default so the system proxy points at the client's
+	// own SOCKS/HTTP ports. The exact addresses are shown in the GUI after
+	// connecting.
+	state.SystemProxy = true
 
 	// Load encrypted config
 	configStorage, err := client.LoadConfigFromVLESS(filepath.Join(client.GetConfigFilesPath(), "config.vless"))
@@ -861,14 +876,8 @@ func main() {
 			statusLabel.SetText("Status: connected")
 			connectBtn.SetText("Disconnect")
 			accessLog("Client connected: SOCKS=127.0.0.1:%d HTTP=127.0.0.1:%d", cfg.SOCKS.Port, cfg.HTTP.Port)
-			httpProxyLabel := state.HttpProxy
-			if httpProxyLabel == "" {
-				httpProxyLabel = fmt.Sprintf("127.0.0.1:%d", cfg.HTTP.Port)
-			}
-			socksProxyLabel := state.SocksProxy
-			if socksProxyLabel == "" {
-				socksProxyLabel = fmt.Sprintf("127.0.0.1:%d", cfg.SOCKS.Port)
-			}
+			httpProxyLabel := fmt.Sprintf("127.0.0.1:%d", cfg.HTTP.Port)
+			socksProxyLabel := fmt.Sprintf("127.0.0.1:%d", cfg.SOCKS.Port)
 			httpProxyIndicator.SetText("HTTP Proxy: ✅ " + httpProxyLabel)
 			socksProxyIndicator.SetText("SOCKS Proxy: ✅ " + socksProxyLabel)
 
@@ -1004,5 +1013,8 @@ func main() {
 		w.Hide()
 	})
 
+	if debugMode {
+		debugLog("About to show main window (ShowAndRun); any GLFW/OpenGL errors will be written to gui_debug.log")
+	}
 	w.ShowAndRun()
 }

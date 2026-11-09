@@ -119,9 +119,10 @@ func Decrypt(data []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// GetConfigFilesPath returns the path where config.vless and system.ini should be stored
+// GetConfigFilesPath returns the path where config.vless and system.ini should be stored.
+// Config files are always looked up in the directory of the running executable,
+// so they live in the same folder where the program is launched.
 func GetConfigFilesPath() string {
-	// On Windows, config files are always in the same directory as the executable
 	exePath, err := os.Executable()
 	if err != nil {
 		return "." // Fallback to current directory

@@ -25,9 +25,6 @@ import (
 type ProgramState struct {
 	ConfigFile        string `ini:"ConfigFile"`
 	SystemProxy       bool   `ini:"SystemProxy"`
-	ConfigPath        string `ini:"ConfigPath"`
-	HttpProxy         string `ini:"http_proxy"`
-	SocksProxy        string `ini:"socks_proxy"`
 	SeparateTunneling string `ini:"separate_tunneling"`
 	LogLevel          string `ini:"log_level"`
 	LogFile           string `ini:"log_file"`
@@ -66,8 +63,6 @@ func LoadProgramState() (*ProgramState, error) {
 
 	state.ConfigFile = section.Key("ConfigFile").String()
 	state.SystemProxy, _ = section.Key("SystemProxy").Bool()
-	state.HttpProxy = section.Key("http_proxy").String()
-	state.SocksProxy = section.Key("socks_proxy").String()
 	state.SeparateTunneling = section.Key("separate_tunneling").String()
 	state.LogLevel = section.Key("log_level").String()
 	state.LogFile = section.Key("log_file").String()
@@ -113,8 +108,6 @@ func SaveProgramState(state *ProgramState) error {
 
 	section.Key("ConfigFile").SetValue(state.ConfigFile)
 	section.Key("SystemProxy").SetValue(fmt.Sprintf("%v", state.SystemProxy))
-	section.Key("http_proxy").SetValue(state.HttpProxy)
-	section.Key("socks_proxy").SetValue(state.SocksProxy)
 	section.Key("separate_tunneling").SetValue(state.SeparateTunneling)
 	section.Key("log_level").SetValue(state.LogLevel)
 	section.Key("log_file").SetValue(state.LogFile)

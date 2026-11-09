@@ -7,6 +7,7 @@ package main
 
 import (
 	"fmt"
+	"fyne.io/fyne/v2"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,9 +30,62 @@ func destroyHiddenWindow() {
 	// No hidden window to destroy on Linux
 }
 
-// setupSystemTray is a dummy implementation for Linux
+// setupSystemTray installs a native Fyne system tray on Linux GUI builds.
+// Closing the window hides it (the app keeps running in memory); the tray lets
+// the user restore the window ("Show VLESS Client") or exit ("Exit").
+//
+// SetSystemTrayMenu is not on the fyne.App interface - it lives on the private
+// systrayDriver marker interface - so we type-assert against it. If the driver
+// doesn't support a tray (some desktop environments), we log a warning instead
+// of crashing. Left-click restores the window, right-click shows the menu.
 func setupSystemTray(w interface{}, a interface{}) {
-	// System tray might not be supported on all Linux desktop environments
+	tray, ok := a.(interface {
+		SetSystemTrayMenu(*fyne.Menu)
+	})
+	if !ok {
+		infoLog("Warning: app does not support native system tray menu")
+		return
+	}
+
+	iconResource := loadTrayIcon()
+
+	// Type-assert the app for its Quit() method (it's typed as interface{}).
+	appQuit, okQuit := a.(interface{ Quit() })
+	if !okQuit {
+		infoLog("Warning: app does not support Quit()")
+		return
+	}
+
+	mainMenu := fyne.NewMenu("VLESS Client",
+		fyne.NewMenuItemWithIcon("Show VLESS Client", iconResource, func() {
+			if win, ok2 := w.(interface {
+				Show()
+				RequestFocus()
+			}); ok2 {
+				fyne.Do(func() {
+					win.Show()
+					win.RequestFocus()
+				})
+			}
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Exit", func() {
+			fyne.Do(appQuit.Quit)
+		}),
+	)
+
+	tray.SetSystemTrayMenu(mainMenu)
+}
+
+// loadTrayIcon loads the application icon for the tray, or returns nil so Fyne
+// falls back to its default icon.
+func loadTrayIcon() fyne.Resource {
+	iconData, err := os.ReadFile("vless.ico")
+	if err != nil {
+		infoLog("Warning: failed to load tray icon: %v", err)
+		return nil
+	}
+	return fyne.NewStaticResource("vless.ico", iconData)
 }
 
 // gsettingsAvailable checks if gsettings command is available
